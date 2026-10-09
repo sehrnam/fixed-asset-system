@@ -1,26 +1,67 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { CURRENCY } from "../../config";
 import { reportsApi } from "./api";
 import { downloadBlob, safeFilename } from "./exportUtils";
 import { AssetMovementReport, TableReport } from "./types";
 
-type ReportKey = "asset-register" | "depreciation-schedule" | "asset-movement" | "disposal-register";
+type ReportKey =
+  | "asset-register"
+  | "depreciation-schedule"
+  | "asset-movement"
+  | "disposal-register";
 
-const REPORTS: { key: ReportKey; label: string; needsPeriod: boolean; exportable: boolean }[] = [
+const REPORTS: {
+  key: ReportKey;
+  label: string;
+  needsPeriod: boolean;
+  exportable: boolean;
+}[] = [
   { key: "asset-register", label: "Asset Register", needsPeriod: false, exportable: true },
-  { key: "depreciation-schedule", label: "Depreciation Schedule", needsPeriod: false, exportable: true },
+  { key: "depreciation-schedule", label: "Depreciation Schedule", needsPeriod: true, exportable: true },
   { key: "asset-movement", label: "Asset Movement", needsPeriod: true, exportable: false },
   { key: "disposal-register", label: "Disposal Register", needsPeriod: false, exportable: true },
 ];
 
+const MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
 function money(v: number) {
-  return `${CURRENCY} ${v.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return `${CURRENCY} ${v.toLocaleString(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+function currentMonthLabel(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function recentMonths(count: number): string[] {
+  const out: string[] = [];
+  const d = new Date();
+  for (let i = 0; i < count; i++) {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    out.push(`${y}-${m}`);
+    d.setMonth(d.getMonth() - 1);
+  }
+  return out;
+}
+
+function prettyLabel(label: string): string {
+  const [y, m] = label.split("-");
+  const idx = Number(m) - 1;
+  if (idx < 0 || idx > 11) return label;
+  return `${MONTH_NAMES[idx]} ${y}`;
 }
 
 export default function ReportsPage() {
-  const currentYear = new Date().getFullYear();
+  const monthOptions = useMemo(() => recentMonths(60), []);
   const [selected, setSelected] = useState<ReportKey>("asset-register");
-  const [periodLabel, setPeriodLabel] = useState(String(currentYear));
+  const [periodLabel, setPeriodLabel] = useState<string>(currentMonthLabel());
   const [loading, setLoading] = useState(false);
   const [exporting, setExporting] = useState<null | "xlsx" | "pdf">(null);
   const [error, setError] = useState<string | null>(null);
@@ -36,10 +77,15 @@ export default function ReportsPage() {
     setTable(null);
     setMovement(null);
     try {
-      if (key === "asset-register") setTable(await reportsApi.assetRegister());
-      else if (key === "depreciation-schedule") setTable(await reportsApi.depreciationSchedule());
-      else if (key === "disposal-register") setTable(await reportsApi.disposalRegister());
-      else if (key === "asset-movement") setMovement(await reportsApi.assetMovement(periodLabel));
+      if (key === "asset-register") {
+        setTable(await reportsApi.assetRegister());
+      } else if (key === "depreciation-schedule") {
+        setTable(await reportsApi.depreciationSchedule(periodLabel));
+      } else if (key === "disposal-register") {
+        setTable(await reportsApi.disposalRegister());
+      } else if (key === "asset-movement") {
+        setMovement(await reportsApi.assetMovement(periodLabel));
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load report");
     } finally {
@@ -52,11 +98,19 @@ export default function ReportsPage() {
     setError(null);
     setExporting(format);
     try {
+      // Pass period_label only when the report supports it
+      const needsPeriod = selectedMeta.needsPeriod;
+      const query = needsPeriod
+        ? `?period_label=${encodeURIComponent(periodLabel)}`
+        : "";
       const url =
-       format === "xlsx"
-        ? `/exports/reports/${selected}/xlsx`
-        : `/exports/reports/${selected}/pdf`;
-      const filename = safeFilename(table?.title ?? selected, format);
+        format === "xlsx"
+          ? `/exports/reports/${selected}/xlsx${query}`
+          : `/exports/reports/${selected}/pdf${query}`;
+      const filename = safeFilename(
+        needsPeriod ? `${selected}-${periodLabel}` : (table?.title ?? selected),
+        format
+      );
       await downloadBlob(url, filename);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Export failed");
@@ -69,7 +123,9 @@ export default function ReportsPage() {
     <div className="space-y-4">
       <div>
         <h1 className="text-xl font-semibold text-slate-900">Reports</h1>
-        <p className="text-sm text-slate-500">Generate fixed-asset accounting reports from authoritative data.</p>
+        <p className="text-sm text-slate-500">
+          Generate fixed-asset accounting reports from authoritative data.
+        </p>
       </div>
 
       <div className="flex flex-wrap gap-2 items-center">
@@ -87,16 +143,22 @@ export default function ReportsPage() {
           </button>
         ))}
 
-        {selected === "asset-movement" && (
+        {selectedMeta?.needsPeriod && (
           <label className="flex items-center gap-2 ml-2">
-            <span className="text-xs text-slate-600">Period</span>
-            <input
+            <span className="text-xs text-slate-600">Month</span>
+            <select
               value={periodLabel}
               onChange={(e) => setPeriodLabel(e.target.value)}
-              className="w-24 rounded border border-slate-300 px-2 py-1 text-sm"
-            />
+              className="rounded border border-slate-300 px-2 py-1 text-sm bg-white"
+            >
+              {monthOptions.map((m) => (
+                <option key={m} value={m}>
+                  {prettyLabel(m)}
+                </option>
+              ))}
+            </select>
             <button
-              onClick={() => run("asset-movement")}
+              onClick={() => run(selected)}
               className="rounded bg-brand-600 text-white px-3 py-1 text-sm hover:bg-brand-700"
             >
               Run
@@ -105,16 +167,20 @@ export default function ReportsPage() {
         )}
       </div>
 
-      {error && <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded px-3 py-2">{error}</div>}
+      {error && (
+        <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded px-3 py-2">
+          {error}
+        </div>
+      )}
 
       {loading && <div className="text-sm text-slate-500">Loading report…</div>}
 
       {table && (
         <div className="bg-white border border-slate-200 rounded overflow-x-auto">
-          <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-4">
+          <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-4 flex-wrap">
             <h2 className="text-sm font-semibold text-slate-800">{table.title}</h2>
 
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 flex-wrap">
               {table.totals && (
                 <div className="text-xs text-slate-500 space-x-3">
                   {Object.entries(table.totals).map(([k, v]) => (
@@ -148,13 +214,20 @@ export default function ReportsPage() {
           </div>
 
           {table.rows.length === 0 ? (
-            <div className="p-5 text-sm text-slate-500">No data.</div>
+            <div className="p-5 text-sm text-slate-500">
+              No data for {selectedMeta?.needsPeriod ? prettyLabel(periodLabel) : "this report"}.
+            </div>
           ) : (
             <table className="min-w-full text-sm">
               <thead className="bg-slate-50 text-slate-600">
                 <tr>
                   {table.columns.map((c) => (
-                    <th key={c} className="text-left px-4 py-2 font-medium whitespace-nowrap">{c}</th>
+                    <th
+                      key={c}
+                      className="text-left px-4 py-2 font-medium whitespace-nowrap"
+                    >
+                      {c}
+                    </th>
                   ))}
                 </tr>
               </thead>
@@ -162,7 +235,9 @@ export default function ReportsPage() {
                 {table.rows.map((row, i) => (
                   <tr key={i} className="border-t border-slate-100">
                     {row.map((v, j) => (
-                      <td key={j} className="px-4 py-2 tabular-nums whitespace-nowrap">{v}</td>
+                      <td key={j} className="px-4 py-2 tabular-nums whitespace-nowrap">
+                        {v}
+                      </td>
                     ))}
                   </tr>
                 ))}
@@ -175,8 +250,12 @@ export default function ReportsPage() {
       {movement && (
         <div className="bg-white border border-slate-200 rounded overflow-x-auto">
           <div className="px-5 py-3 border-b border-slate-100">
-            <h2 className="text-sm font-semibold text-slate-800">Asset Movement — {movement.period_label}</h2>
-            <p className="text-xs text-slate-500">Opening + Additions − Disposals = Closing</p>
+            <h2 className="text-sm font-semibold text-slate-800">
+              Asset Movement — {prettyLabel(movement.period_label)}
+            </h2>
+            <p className="text-xs text-slate-500">
+              Opening + Additions − Disposals = Closing
+            </p>
           </div>
           <table className="min-w-full text-sm">
             <thead className="bg-slate-50 text-slate-600">
@@ -195,24 +274,52 @@ export default function ReportsPage() {
               {movement.rows.map((r, i) => (
                 <tr key={i} className="border-t border-slate-100">
                   <td className="px-4 py-2">{r.category_name}</td>
-                  <td className="px-4 py-2 text-right tabular-nums">{money(r.opening_cost)}</td>
-                  <td className="px-4 py-2 text-right tabular-nums">{money(r.additions)}</td>
-                  <td className="px-4 py-2 text-right tabular-nums">{money(r.disposals)}</td>
-                  <td className="px-4 py-2 text-right tabular-nums">{money(r.closing_cost)}</td>
-                  <td className="px-4 py-2 text-right tabular-nums">{money(r.dep_charge)}</td>
-                  <td className="px-4 py-2 text-right tabular-nums">{money(r.closing_accum)}</td>
-                  <td className="px-4 py-2 text-right tabular-nums">{money(r.closing_nbv)}</td>
+                  <td className="px-4 py-2 text-right tabular-nums">
+                    {money(r.opening_cost)}
+                  </td>
+                  <td className="px-4 py-2 text-right tabular-nums">
+                    {money(r.additions)}
+                  </td>
+                  <td className="px-4 py-2 text-right tabular-nums">
+                    {money(r.disposals)}
+                  </td>
+                  <td className="px-4 py-2 text-right tabular-nums">
+                    {money(r.closing_cost)}
+                  </td>
+                  <td className="px-4 py-2 text-right tabular-nums">
+                    {money(r.dep_charge)}
+                  </td>
+                  <td className="px-4 py-2 text-right tabular-nums">
+                    {money(r.closing_accum)}
+                  </td>
+                  <td className="px-4 py-2 text-right tabular-nums">
+                    {money(r.closing_nbv)}
+                  </td>
                 </tr>
               ))}
               <tr className="border-t-2 border-slate-300 bg-slate-50 font-medium">
                 <td className="px-4 py-2">TOTAL</td>
-                <td className="px-4 py-2 text-right tabular-nums">{money(movement.totals.opening_cost)}</td>
-                <td className="px-4 py-2 text-right tabular-nums">{money(movement.totals.additions)}</td>
-                <td className="px-4 py-2 text-right tabular-nums">{money(movement.totals.disposals)}</td>
-                <td className="px-4 py-2 text-right tabular-nums">{money(movement.totals.closing_cost)}</td>
-                <td className="px-4 py-2 text-right tabular-nums">{money(movement.totals.dep_charge)}</td>
-                <td className="px-4 py-2 text-right tabular-nums">{money(movement.totals.closing_accum)}</td>
-                <td className="px-4 py-2 text-right tabular-nums">{money(movement.totals.closing_nbv)}</td>
+                <td className="px-4 py-2 text-right tabular-nums">
+                  {money(movement.totals.opening_cost)}
+                </td>
+                <td className="px-4 py-2 text-right tabular-nums">
+                  {money(movement.totals.additions)}
+                </td>
+                <td className="px-4 py-2 text-right tabular-nums">
+                  {money(movement.totals.disposals)}
+                </td>
+                <td className="px-4 py-2 text-right tabular-nums">
+                  {money(movement.totals.closing_cost)}
+                </td>
+                <td className="px-4 py-2 text-right tabular-nums">
+                  {money(movement.totals.dep_charge)}
+                </td>
+                <td className="px-4 py-2 text-right tabular-nums">
+                  {money(movement.totals.closing_accum)}
+                </td>
+                <td className="px-4 py-2 text-right tabular-nums">
+                  {money(movement.totals.closing_nbv)}
+                </td>
               </tr>
             </tbody>
           </table>
