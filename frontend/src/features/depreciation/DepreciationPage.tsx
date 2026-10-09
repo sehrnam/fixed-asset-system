@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { CURRENCY } from "../../config";
 import { useAuth } from "../auth/AuthContext";
 import { assetsApi } from "../assets/api";
@@ -13,6 +13,41 @@ function money(v: number) {
   })}`;
 }
 
+// -------- Monthly period helpers --------
+
+const MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
+function currentMonthLabel(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function recentMonths(count: number): string[] {
+  const out: string[] = [];
+  const d = new Date();
+  for (let i = 0; i < count; i++) {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    out.push(`${y}-${m}`);
+    d.setMonth(d.getMonth() - 1);
+  }
+  return out;
+}
+
+function prettyLabel(label: string): string {
+  const parts = label.split("-");
+  if (parts.length !== 2) return label;
+  const y = parts[0];
+  const mIdx = Number(parts[1]) - 1;
+  if (mIdx < 0 || mIdx > 11) return label;
+  return `${MONTH_NAMES[mIdx]} ${y}`;
+}
+
+// -------- Page --------
+
 export default function DepreciationPage() {
   const { user } = useAuth();
   const canRun = user?.role === "admin" || user?.role === "accounting";
@@ -23,8 +58,8 @@ export default function DepreciationPage() {
   const [scheduleLoading, setScheduleLoading] = useState(false);
   const [scheduleError, setScheduleError] = useState<string | null>(null);
 
-  const currentYear = new Date().getFullYear();
-  const [throughPeriod, setThroughPeriod] = useState<string>(String(currentYear));
+  const monthOptions = useMemo(() => recentMonths(24), []);
+  const [throughPeriod, setThroughPeriod] = useState<string>(currentMonthLabel());
   const [running, setRunning] = useState(false);
   const [runMessage, setRunMessage] = useState<string | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
@@ -55,12 +90,13 @@ export default function DepreciationPage() {
     setRunMessage(null);
     setRunning(true);
     try {
-      const result = await depreciationApi.run(throughPeriod.trim());
+      const result = await depreciationApi.run(throughPeriod);
       setRunMessage(
         `Run complete: ${result.assets_processed} assets processed, ` +
-          `${result.records_written} records written (through ${result.through_period}).`
+          `${result.records_written} records written (through ${prettyLabel(
+            result.through_period
+          )}).`
       );
-      // Refresh the schedule if one is selected.
       if (selectedAssetId !== "") {
         const fresh = await depreciationApi.scheduleForAsset(Number(selectedAssetId));
         setSchedule(fresh);
@@ -77,17 +113,20 @@ export default function DepreciationPage() {
       <div>
         <h1 className="text-xl font-semibold text-slate-900">Depreciation</h1>
         <p className="text-sm text-slate-500">
-          Run the server-side depreciation engine and inspect asset schedules.
+          Monthly straight-line depreciation. Runs automatically on the last day
+          of each month; the controls below are for admin verification and testing.
         </p>
       </div>
 
       {canRun && (
         <section className="bg-white border border-slate-200 rounded p-5 space-y-3 max-w-xl">
           <div>
-            <h2 className="text-sm font-semibold text-slate-800">Run depreciation</h2>
+            <h2 className="text-sm font-semibold text-slate-800">
+              Run depreciation (admin)
+            </h2>
             <p className="text-xs text-slate-500">
-              Computes and stores period records for all active assets from each
-              asset's acquisition year through the entered period.
+              Computes and stores monthly records for all active assets from each
+              asset&apos;s acquisition month through the selected month.
             </p>
           </div>
 
@@ -104,21 +143,27 @@ export default function DepreciationPage() {
 
           <form onSubmit={onRun} className="flex items-end gap-3">
             <label className="block">
-              <span className="text-xs font-medium text-slate-600">Through period</span>
-              <input
+              <span className="text-xs font-medium text-slate-600">
+                Through month
+              </span>
+              <select
                 value={throughPeriod}
                 onChange={(e) => setThroughPeriod(e.target.value)}
-                placeholder="2024"
-                required
-                className="mt-1 w-32 rounded border border-slate-300 px-3 py-2 text-sm"
-              />
+                className="mt-1 w-48 rounded border border-slate-300 px-3 py-2 text-sm bg-white"
+              >
+                {monthOptions.map((m) => (
+                  <option key={m} value={m}>
+                    {prettyLabel(m)}
+                  </option>
+                ))}
+              </select>
             </label>
             <button
               type="submit"
               disabled={running}
               className="rounded bg-brand-600 text-white px-4 py-2 text-sm font-medium hover:bg-brand-700 disabled:opacity-50"
             >
-              {running ? "Runningâ€¦" : "Run depreciation"}
+              {running ? "Running…" : "Run depreciation"}
             </button>
           </form>
         </section>
@@ -127,18 +172,20 @@ export default function DepreciationPage() {
       <section className="space-y-3">
         <div className="flex items-end gap-3">
           <label className="block">
-            <span className="text-sm font-medium text-slate-700">Asset schedule</span>
+            <span className="text-sm font-medium text-slate-700">
+              Asset schedule
+            </span>
             <select
               value={selectedAssetId}
               onChange={(e) =>
                 setSelectedAssetId(e.target.value === "" ? "" : Number(e.target.value))
               }
-              className="mt-1 w-80 rounded border border-slate-300 px-3 py-2 text-sm bg-white"
+              className="mt-1 w-96 rounded border border-slate-300 px-3 py-2 text-sm bg-white"
             >
               <option value="">Select an asset to view its schedule</option>
               {assets.map((a) => (
                 <option key={a.id} value={a.id}>
-                  {a.asset_code} â€” {a.name}
+                  {a.asset_code} — {a.name}
                 </option>
               ))}
             </select>
@@ -154,10 +201,10 @@ export default function DepreciationPage() {
         {selectedAssetId !== "" && (
           <>
             {scheduleLoading ? (
-              <div className="text-sm text-slate-500">Loadingâ€¦</div>
+              <div className="text-sm text-slate-500">Loading…</div>
             ) : schedule.length === 0 ? (
               <div className="bg-white border border-dashed border-slate-300 rounded p-6 text-center text-sm text-slate-600">
-                No depreciation records yet for this asset. Run depreciation above.
+                No depreciation records yet for this asset.
               </div>
             ) : (
               <div className="bg-white border border-slate-200 rounded overflow-x-auto">
@@ -165,7 +212,7 @@ export default function DepreciationPage() {
                   <thead className="bg-slate-50 text-slate-600">
                     <tr>
                       <th className="text-left px-3 py-2 font-medium">Period</th>
-                      <th className="text-right px-3 py-2 font-medium">Months</th>
+                      <th className="text-left px-3 py-2 font-medium">Basis</th>
                       <th className="text-right px-3 py-2 font-medium">Opening NBV</th>
                       <th className="text-right px-3 py-2 font-medium">Depreciation</th>
                       <th className="text-right px-3 py-2 font-medium">Accumulated</th>
@@ -176,9 +223,22 @@ export default function DepreciationPage() {
                   <tbody>
                     {schedule.map((r) => (
                       <tr key={r.id} className="border-t border-slate-100">
-                        <td className="px-3 py-2 font-mono text-xs">{r.period_label}</td>
-                        <td className="px-3 py-2 text-right tabular-nums">
-                          {r.months_charged_this_period}
+                        <td className="px-3 py-2 font-mono text-xs whitespace-nowrap">
+                          {r.period_label}
+                        </td>
+                        <td className="px-3 py-2 text-xs">
+                          {r.is_first_month ? (
+                            <span title="First-month proration">
+                              First month{" "}
+                              <span className="tabular-nums">
+                                ({r.eligible_days}/{r.days_in_month} days)
+                              </span>
+                            </span>
+                          ) : r.capped ? (
+                            <span className="text-amber-700 font-medium">Capped</span>
+                          ) : (
+                            "Full month"
+                          )}
                         </td>
                         <td className="px-3 py-2 text-right tabular-nums">
                           {money(r.opening_nbv)}
@@ -192,9 +252,7 @@ export default function DepreciationPage() {
                         <td className="px-3 py-2 text-right tabular-nums">
                           {money(r.closing_nbv)}
                         </td>
-                        <td className="px-3 py-2 text-xs text-slate-600">
-                          {r.method === "straight_line" ? "SL" : "RB"}
-                        </td>
+                        <td className="px-3 py-2 text-xs text-slate-600">SL</td>
                       </tr>
                     ))}
                   </tbody>

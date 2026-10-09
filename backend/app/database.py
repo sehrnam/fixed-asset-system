@@ -22,6 +22,8 @@ def init_db() -> None:
     from app.models import cell as _cell  # noqa: F401
     from app.models import disposal as _disposal  # noqa: F401
     from app.models import journal as _journal  # noqa: F401
+    # v3.0 addition - stores generated monthly PDF reports
+    from app.models import monthly_report_pdf as _mrp  # noqa: F401
 
     SQLModel.metadata.create_all(engine)
 

@@ -9,6 +9,7 @@ import AssetListPage from "./features/assets/AssetListPage";
 import DashboardPage from "./features/dashboard/DashboardPage";
 import DepreciationPage from "./features/depreciation/DepreciationPage";
 import DisposalsPage from "./features/disposals/DisposalsPage";
+import MonthlyReportsPage from "./features/reports/MonthlyReportsPage";
 import ReportsPage from "./features/reports/ReportsPage";
 import SettingsPage from "./features/settings/SettingsPage";
 import WorkbookPage from "./features/workbook/WorkbookPage";
@@ -55,7 +56,7 @@ function AppRoutes() {
         <Route path="/assets/:id" element={<AssetDetailPage />} />
         <Route path="/assets/:id/edit" element={<AssetFormPage mode="edit" />} />
 
-        {/* Depreciation (M3) */}
+        {/* Depreciation (M3 / v3.0 monthly) */}
         <Route path="/depreciation" element={<DepreciationPage />} />
 
         {/* Disposals (M5) */}
@@ -63,6 +64,9 @@ function AppRoutes() {
 
         {/* Reports (M5) */}
         <Route path="/reports" element={<ReportsPage />} />
+
+        {/* Monthly Reports (v3.0 - bank-style schedule + download/print) */}
+        <Route path="/reports/monthly" element={<MonthlyReportsPage />} />
 
         {/* Settings (M5) */}
         <Route path="/settings" element={<SettingsPage />} />

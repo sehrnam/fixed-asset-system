@@ -30,10 +30,17 @@ class Settings(BaseSettings):
         "application/octet-stream"
     )
 
-    # --- Self-healing / free-tier deployment ---
-    # When true, the app ensures the database has working users and demo data
-    # on every startup. Required on free-tier hosts where the filesystem is
-    # ephemeral (Render, Railway, Fly, etc.). Leave false for local development.
+    # --- Self-healing / free-tier deployment (v3.0) ---
+    # When true, the app on every startup:
+    #   - creates tables if missing
+    #   - creates the 4 role-based users if missing
+    #   - seeds bank assets if the DB is empty
+    #   - automatically runs monthly depreciation from the latest existing
+    #     record through the current calendar month
+    #   - generates monthly PDF reports for any newly-charged months
+    #
+    # Required on free-tier hosts where the filesystem is ephemeral
+    # (Render, Railway, Fly, etc.). Leave false for local development.
     auto_bootstrap: bool = False
 
     @property

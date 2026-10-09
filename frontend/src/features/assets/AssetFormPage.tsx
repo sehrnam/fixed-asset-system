@@ -1,6 +1,6 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { categoriesApi, assetsApi } from "./api";
+import { assetsApi, categoriesApi } from "./api";
 import { Category } from "./types";
 
 const isoDateOnly = (v: string) => v.slice(0, 10);
@@ -21,12 +21,17 @@ export default function AssetFormPage({ mode }: { mode: "create" | "edit" }) {
     cost: "",
     acquisition_date: "",
     useful_life_years: "",
-    depreciation_method: "straight_line",
     residual_value: "",
-    rate: "",
     description: "",
     location: "",
   });
+
+  // Rate is derived from useful life (v3.0: straight-line only)
+  const derivedRate = useMemo(() => {
+    const life = Number(form.useful_life_years);
+    if (!Number.isFinite(life) || life <= 0) return "";
+    return (100 / life).toFixed(2);
+  }, [form.useful_life_years]);
 
   useEffect(() => {
     categoriesApi.list().then(setCategories).catch(() => {});
@@ -44,9 +49,7 @@ export default function AssetFormPage({ mode }: { mode: "create" | "edit" }) {
           cost: String(a.cost),
           acquisition_date: isoDateOnly(a.acquisition_date),
           useful_life_years: String(a.useful_life_years),
-          depreciation_method: a.depreciation_method,
           residual_value: String(a.residual_value),
-          rate: a.rate != null ? String(a.rate) : "",
           description: a.description ?? "",
           location: a.location ?? "",
         });
@@ -68,9 +71,11 @@ export default function AssetFormPage({ mode }: { mode: "create" | "edit" }) {
         cost: Number(form.cost),
         acquisition_date: new Date(form.acquisition_date).toISOString(),
         useful_life_years: Number(form.useful_life_years),
-        depreciation_method: form.depreciation_method as "straight_line" | "reducing_balance",
+        // v3.0: straight-line only
+        depreciation_method: "straight_line" as const,
         residual_value: Number(form.residual_value || 0),
-        rate: form.rate === "" ? null : Number(form.rate),
+        // rate is informational; derived from useful life
+        rate: derivedRate === "" ? null : Number(derivedRate),
         description: form.description.trim() || null,
         location: form.location.trim() || null,
       };
@@ -89,7 +94,7 @@ export default function AssetFormPage({ mode }: { mode: "create" | "edit" }) {
     }
   };
 
-  if (loading) return <div className="text-sm text-slate-500">Loadingâ€¦</div>;
+  if (loading) return <div className="text-sm text-slate-500">Loading…</div>;
 
   return (
     <div className="max-w-2xl space-y-4">
@@ -99,7 +104,7 @@ export default function AssetFormPage({ mode }: { mode: "create" | "edit" }) {
         </h1>
         <p className="text-sm text-slate-500">
           {mode === "create"
-            ? "Register a new fixed asset."
+            ? "Register a new fixed asset. Depreciation begins from the acquisition month."
             : "Update the accounting fields for this asset."}
         </p>
       </div>
@@ -110,7 +115,10 @@ export default function AssetFormPage({ mode }: { mode: "create" | "edit" }) {
         </div>
       )}
 
-      <form onSubmit={onSubmit} className="bg-white border border-slate-200 rounded p-5 space-y-4">
+      <form
+        onSubmit={onSubmit}
+        className="bg-white border border-slate-200 rounded p-5 space-y-4"
+      >
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <label className="block">
             <span className="text-sm font-medium text-slate-700">Asset code</span>
@@ -192,45 +200,37 @@ export default function AssetFormPage({ mode }: { mode: "create" | "edit" }) {
           </label>
 
           <label className="block">
-            <span className="text-sm font-medium text-slate-700">Useful life (years)</span>
+            <span className="text-sm font-medium text-slate-700">
+              Useful life (years)
+            </span>
             <input
               type="number"
               step="1"
               min="1"
               value={form.useful_life_years}
-              onChange={(e) => setForm({ ...form, useful_life_years: e.target.value })}
+              onChange={(e) =>
+                setForm({ ...form, useful_life_years: e.target.value })
+              }
               required
               className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm"
             />
           </label>
 
           <label className="block">
-            <span className="text-sm font-medium text-slate-700">Depreciation method</span>
-            <select
-              value={form.depreciation_method}
-              onChange={(e) => setForm({ ...form, depreciation_method: e.target.value })}
-              className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm bg-white"
-            >
-              <option value="straight_line">Straight-line</option>
-              <option value="reducing_balance">Reducing balance</option>
-            </select>
+            <span className="text-sm font-medium text-slate-700">
+              Annual rate (%)
+            </span>
+            <input
+              value={derivedRate ? `${derivedRate}%` : ""}
+              readOnly
+              tabIndex={-1}
+              placeholder="Derived from useful life"
+              className="mt-1 w-full rounded border border-slate-200 px-3 py-2 text-sm bg-slate-50 text-slate-600"
+            />
+            <span className="text-xs text-slate-400">
+              Straight-line: rate = 100 ÷ useful life
+            </span>
           </label>
-
-          {form.depreciation_method === "reducing_balance" && (
-            <label className="block">
-              <span className="text-sm font-medium text-slate-700">Rate (%)</span>
-              <input
-                type="number"
-                step="0.01"
-                min="0.01"
-                max="99.99"
-                value={form.rate}
-                onChange={(e) => setForm({ ...form, rate: e.target.value })}
-                required
-                className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm"
-              />
-            </label>
-          )}
 
           <label className="block">
             <span className="text-sm font-medium text-slate-700">Location</span>
@@ -265,7 +265,7 @@ export default function AssetFormPage({ mode }: { mode: "create" | "edit" }) {
             disabled={submitting}
             className="rounded bg-brand-600 text-white px-4 py-2 text-sm font-medium hover:bg-brand-700 disabled:opacity-50"
           >
-            {submitting ? "Savingâ€¦" : mode === "create" ? "Create asset" : "Save changes"}
+            {submitting ? "Saving…" : mode === "create" ? "Create asset" : "Save changes"}
           </button>
         </div>
       </form>

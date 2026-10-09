@@ -17,6 +17,7 @@ from app.api import disposals as disposals_api
 from app.api import exports as exports_api
 from app.api import imports as imports_api
 from app.api import journals as journals_api
+from app.api import monthly_reports as monthly_reports_api
 from app.api import periods as periods_api
 from app.api import reports as reports_api
 from app.api import workbooks as workbooks_api
@@ -36,11 +37,7 @@ logger = logging.getLogger("app.main")
 
 
 def _check_production_safety() -> None:
-    """Refuse to start with unsafe configuration when ENVIRONMENT=production.
-
-    Fail-fast guard against the classic deployment mistake of shipping with
-    a placeholder SECRET_KEY, insecure cookies, or a wildcard CORS origin.
-    """
+    """Refuse to start with unsafe configuration when ENVIRONMENT=production."""
     if settings.environment != "production":
         return
 
@@ -79,11 +76,18 @@ def _check_production_safety() -> None:
 async def lifespan(app: FastAPI):
     """Startup / shutdown hook.
 
-    On startup, if AUTO_BOOTSTRAP is enabled, ensure the database has
-    working users and demo data. This makes the app self-healing on hosts
-    with ephemeral filesystems (e.g. free-tier Render).
+    On startup, if AUTO_BOOTSTRAP is enabled:
+      - ensures tables exist
+      - creates the 4 role-based users if missing
+      - seeds bank assets if the DB is empty
+      - automatically runs monthly depreciation from the latest existing
+        record through the current calendar month
+      - generates PDF reports for any newly-charged months
 
-    Idempotent: only adds what is missing. Safe to run on every startup.
+    This makes the app self-healing on free-tier hosts where the filesystem
+    is wiped between restarts.
+
+    Idempotent: only adds what is missing.
     """
     if settings.auto_bootstrap:
         try:
@@ -172,6 +176,9 @@ def create_app() -> FastAPI:
     # M6
     app.include_router(exports_api.router)
     app.include_router(imports_api.router)
+
+    # v3.0 - monthly reports (bank-style schedule, download/print)
+    app.include_router(monthly_reports_api.router)
 
     return app
 

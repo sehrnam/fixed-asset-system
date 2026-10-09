@@ -1,3 +1,12 @@
+"""
+Disposal service - v3.0 (monthly periods).
+
+v3.0 changes:
+  - Period labels are monthly ("YYYY-MM")
+  - NBV at disposal uses the previous month's closing balance
+    (no depreciation is charged for the disposal month itself)
+  - Period-open check uses the monthly label
+"""
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -10,6 +19,7 @@ from app.audit.writer import write_audit
 from app.models.asset import Asset, AssetStatus
 from app.models.depreciation_record import DepreciationRecord
 from app.models.disposal import Disposal, DisposalStatus
+from app.models.period import period_label_from_date, previous_month, period_label
 from app.models.user import User
 from app.schemas.disposal import DisposalCreate, DisposalRead
 from app.services import period_service
@@ -20,7 +30,14 @@ def _now() -> datetime:
 
 
 def _period_label_for(dt: datetime) -> str:
-    return str(dt.year)
+    """Return the monthly period label ('YYYY-MM') for the given date."""
+    return period_label_from_date(dt)
+
+
+def _prior_period_label(dt: datetime) -> str:
+    """Return the label of the month immediately before `dt`'s month."""
+    y, m = previous_month(dt.year, dt.month)
+    return period_label(y, m)
 
 
 def _to_read(db: Session, d: Disposal) -> DisposalRead:
@@ -46,14 +63,23 @@ def _to_read(db: Session, d: Disposal) -> DisposalRead:
 
 
 def _compute_nbv(db: Session, asset: Asset, disposal_date: datetime) -> tuple[float, str]:
-    """Return (NBV, method) at disposal date under the frozen demo policy."""
-    period_label = _period_label_for(disposal_date)
+    """Return (NBV, method) at disposal date under v3.0 rules.
+
+    v3.0 rule: no depreciation is charged in the disposal month.
+    NBV is therefore the closing NBV of the month immediately prior.
+
+    If the disposal happens in the acquisition month (edge case), NBV = cost.
+    """
+    prior_label = _prior_period_label(disposal_date)
+
     records = list(
         db.exec(
             select(DepreciationRecord).where(DepreciationRecord.asset_id == asset.id)
         ).all()
     )
-    nbv = net_book_value_at(asset, records, period_label)
+
+    # Fetch NBV as at the end of the prior month using the pure engine helper
+    nbv = net_book_value_at(asset, records, prior_label)
     return round_money(nbv), asset.depreciation_method
 
 
@@ -67,7 +93,7 @@ def create_disposal(db: Session, payload: DisposalCreate, actor: User) -> Dispos
             detail=f"Asset is {asset.status}; only ACTIVE assets can be disposed",
         )
 
-    # Ensure we have a PENDING record doesn't already exist for this asset.
+    # A pending disposal must not already exist for this asset.
     existing = db.exec(
         select(Disposal)
         .where(Disposal.asset_id == asset.id)
@@ -79,18 +105,23 @@ def create_disposal(db: Session, payload: DisposalCreate, actor: User) -> Dispos
             detail="A pending disposal already exists for this asset",
         )
 
-    # No future disposal dates.
+    # Normalize timezone
     disposal_date = payload.disposal_date
     if disposal_date.tzinfo is None:
         disposal_date = disposal_date.replace(tzinfo=timezone.utc)
+
+    # Reject future disposal dates
     if disposal_date > _now():
         raise HTTPException(status_code=400, detail="Disposal date cannot be in the future")
+
+    # Reject disposal before acquisition
     if disposal_date < asset.acquisition_date:
         raise HTTPException(
             status_code=400,
             detail="Disposal date cannot be before the acquisition date",
         )
 
+    # v3.0: check the period is open (monthly label)
     period_label = _period_label_for(disposal_date)
     period_service.assert_period_open(db, period_label)
 
