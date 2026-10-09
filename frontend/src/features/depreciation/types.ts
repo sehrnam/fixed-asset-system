@@ -3,20 +3,23 @@ export type DepreciationRecord = {
   asset_id: number;
   asset_code: string;
   asset_name: string;
-  period_label: string;
+  period_label: string;       // "YYYY-MM"
   period_end_date: string;
   method: string;
   opening_nbv: number;
   depreciation: number;
   accumulated_depreciation: number;
   closing_nbv: number;
-  months_charged_this_period: number;
-  months_charged_cumulative: number;
+  // v3.0 proration + cap tracking
+  days_in_month: number;
+  eligible_days: number;
+  is_first_month: boolean;
+  capped: boolean;
   policy_source: string;
 };
 
 export type RunResult = {
-  through_period: string;
+  through_period: string;     // "YYYY-MM"
   assets_processed: number;
   records_written: number;
 };
